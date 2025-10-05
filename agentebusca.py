@@ -1,107 +1,127 @@
+import sys
+import os
+from collections import deque
 import cv2
 import numpy as np
-from collections import deque
-import os, sys
 
-class Enviroment:
-     DIR_DELTAS = {'N': (-1, 0), 'S': (1, 0), 'L': (0, 1), 'O': (0, -1)}
-     def __init__(self, maze_file='maze.txt', grid_lines=None):
-         if maze_file:
-             self.grid = [list (line.rstrip("\n")) for line in open('maze.txt')]
-         elif grid_lines:
-             self.grid = [list(line) for line in grid_lines]
-         else:
-             raise ValueError("Passe filename ou grid_lines")   
-         
-         maxc = max(len(row) for row in self.grid)
-         for r in self.grid:
-             if len(r) < maxc:
-                 r += ['X'] * (maxc - len(r))     
-             
-         self.rows = len(self.grid)
-         self.cols = maxc
-             
-         self.entrada = None
-         self.saida = None
-         self.comida = 0
-         
-         for i in range(self.rows):
-             for j in range(self.cols):
-                 c = self.grid[i][j]
-                 if c == 'E':
-                     self.entrada = (i, j)
-                 elif c == 'S':
-                     self.saida = (i, j)
-                 elif c == 'o':
-                     self.comida += 1
-             if self.entrada is None or self.saida is None:
-                 raise ValueError("Mapa precisa ter Entrada e Saída")  
-             
-     def in_bounds(self, pos): 
-         r, c = pos
-         return 0 <= r < self.rows and 0 <= c < self.cols
-     
-     def get_cell(self, pos):
-         r, c = pos
-         if not self.in_bounds(pos):
-             return 'X'
-         return self.grid[r][c]
-         
-     def set_cell(self, pos, val):
-         r, c = pos
-         if self.in_bounds(pos):
-             self.grid[r,c] = val    
-     
-     def remove_food(self, pos):
-         if self.get_cell(pos) == 'o':
-             self.set_cell(pos, '_')
-             self.comida -= 1
-             return True
-         return False
-     
-     def getSensor(self, agent_pos, agent_dir):
-         sr = [['X'] * 3 for _ in range(3)]
-         ar, ac = agent_pos
-         for dr in range(-1, 2):
-             for dc in range(-1, 2):
-                 rr = ar + dr
-                 cc = ac + dc
-                 if 0 <= rr < self.rows and 0 <= cc < self.cols:
-                     sr[dr+1][dc+1] = self.grid[rr][cc]
-                 else:
-                     sr[dr+1][dc+1] = 'X'
-         sr[2][2] = agent_dir
-         return sr
+# Environment
+class Environment:
+    """
+    Lê e mantém o mapa (grid).
+    Fornece getSensor(pos, dir) que retorna 3x3 com mat[2][2] = direção.
+    """
+    DIR_DELTAS = {'N': (-1, 0), 'S': (1, 0), 'L': (0, 1), 'O': (0, -1)}
 
-     def try_move(self, agent, new_dir=None):
-         if new_dir is not None:
-             agent.direction = new_dir
-         dr, dc = Enviroment.DIR_DELTAS[agent.direction]
-         nr, nc = agent.pos[0] + dr, agent.pos[1] + dc
-         if not self.in_bounds((nr, nc)):
-             return False
-         if self.grid[nr][nc] == 'X':
-             return False
-         agent.pos = (nr, nc)
-         return True
+    def __init__(self, filename='maze.txt', grid_lines=None):
+        if filename:
+            self.grid = [list(line.rstrip("\n")) for line in open('maze.txt')]
+        elif grid_lines:
+            self.grid = [list(line) for line in grid_lines]
+        else:
+            raise ValueError("Passe filename ou grid_lines")
 
+        # normalizar largura das linhas (preencher com 'X' se necessário)
+        maxc = max(len(row) for row in self.grid)
+        for r in self.grid:
+            if len(r) < maxc:
+                r += ['X'] * (maxc - len(r))
+
+        self.rows = len(self.grid)
+        self.cols = maxc
+
+        # localizar entrada, saída, contar comidas
+        self.entrance = None
+        self.exit = None
+        self.food_count = 0
+
+        for i in range(self.rows):
+            for j in range(self.cols):
+                c = self.grid[i][j]
+                if c == 'E':
+                    self.entrance = (i, j)
+                elif c == 'S':
+                    self.exit = (i, j)
+                elif c == 'o':
+                    self.food_count += 1
+
+        if self.entrance is None or self.exit is None:
+            raise ValueError("Mapa precisa ter 'E' (entrada) e 'S' (saída)")
+
+    def in_bounds(self, pos):
+        r, c = pos
+        return 0 <= r < self.rows and 0 <= c < self.cols
+
+    def get_cell(self, pos):
+        r, c = pos
+        if not self.in_bounds(pos):
+            return 'X'
+        return self.grid[r][c]
+
+    def set_cell(self, pos, val):
+        r, c = pos
+        if self.in_bounds(pos):
+            self.grid[r][c] = val
+
+    def remove_food(self, pos):
+        """Remove comida em pos (se houver). Retorna True se removeu."""
+        if self.get_cell(pos) == 'o':
+            self.set_cell(pos, '_')
+            self.food_count -= 1
+            return True
+        return False
+
+    def getSensor(self, agent_pos, agent_dir):
+        """
+        Retorna uma matriz 3x3 de caracteres com a vizinhança absoluta do agente.
+        A célula [2][2] (canto inferior direito) recebe o agente_dir.
+        """
+        sr = [['X'] * 3 for _ in range(3)]
+        ar, ac = agent_pos
+        for dr in range(-1, 2):
+            for dc in range(-1, 2):
+                rr = ar + dr
+                cc = ac + dc
+                if 0 <= rr < self.rows and 0 <= cc < self.cols:
+                    sr[dr+1][dc+1] = self.grid[rr][cc]
+                else:
+                    sr[dr+1][dc+1] = 'X'
+        sr[2][2] = agent_dir
+        return sr
+
+    def try_move(self, agent, new_dir=None):
+        """
+        Move o agente se a célula à frente não for parede.
+        Recebe um objeto agent com atributos pos (r,c) e direction.
+        Retorna True se moveu.
+        """
+        if new_dir is not None:
+            agent.direction = new_dir
+        dr, dc = Environment.DIR_DELTAS[agent.direction]
+        nr, nc = agent.pos[0] + dr, agent.pos[1] + dc
+        if not self.in_bounds((nr, nc)):
+            return False
+        if self.grid[nr][nc] == 'X':
+            return False
+        agent.pos = (nr, nc)
+        return True
+
+# Agent
 class Agent:
     ARROW = {'N': '^', 'S': 'v', 'L': '>', 'O': '<'}
 
-    def __init__(self, env: Enviroment):
+    def __init__(self, env: Environment):
         self.env = env
-        self.pos = env.entrada
+        self.pos = env.entrance
         self.direction = 'N'
         self.memory = {}  # (r,c) -> char visto
         self.steps = 0
         self.collected = 0
-        self.frames = []  # lista de frames (numpy arrays) para salvar vídeo se quiser
+        self.frames = []  # lista de frames
 
         # objetivo: número de comidas a coletar (padrão = número real no env)
-        self.target_food = env.comida
+        self.target_food = env.food_count
 
     def sense_and_update(self):
-        """Pega sensor 3x3 e atualiza memória (ignora mat[2][2] = dir)."""
         mat = self.env.getSensor(self.pos, self.direction)
         ar, ac = self.pos
         for dr in range(-1, 2):
@@ -128,7 +148,7 @@ class Agent:
         return moved
 
     def neighbors(self, pos):
-        for d, (dr, dc) in Enviroment.DIR_DELTAS.items():
+        for d, (dr, dc) in Environment.DIR_DELTAS.items():
             yield (pos[0]+dr, pos[1]+dc), d
 
     def bfs(self, start, goal_test, allow_unknown=False):
@@ -195,7 +215,7 @@ class Agent:
             nxt = path[i]
             delta = (nxt[0] - cur[0], nxt[1] - cur[1])
             # define direção necessária
-            for d, (dr, dc) in Enviroment.DIR_DELTAS.items():
+            for d, (dr, dc) in Environment.DIR_DELTAS.items():
                 if (dr, dc) == delta:
                     self.set_direction(d)
                     break
@@ -207,6 +227,12 @@ class Agent:
         return
 
     def run(self, render_callback=None, max_steps=10000):
+        """
+        Loop principal do agente:
+         - enquanto não coletou target_food, pega comidas conhecidas ou explora
+         - ao completar, vai para saída
+        render_callback(pos, dir) -> retorna frame numpy para armazenar/exibir.
+        """
         # inicial sensing e frame
         self.sense_and_update()
         if render_callback:
@@ -218,9 +244,9 @@ class Agent:
 
             # se já coletou todas as comidas, vai para saída
             if self.collected >= self.target_food:
-                path = self.bfs(self.pos, lambda p: p == self.env.saida, allow_unknown=False)
+                path = self.bfs(self.pos, lambda p: p == self.env.exit, allow_unknown=False)
                 if path is None:
-                    path = self.bfs(self.pos, lambda p: p == self.env.saida, allow_unknown=True)
+                    path = self.bfs(self.pos, lambda p: p == self.env.exit, allow_unknown=True)
                 if path:
                     self.follow_path(path, render_callback=render_callback)
                 break
@@ -260,23 +286,25 @@ class Agent:
     @property
     def score(self):
         return self.collected * 10 - self.steps
-        
-#Geração do Vídeo
 
-#cv2.VideoWriter(filename, fourcc, fps, frame_size, isColor)
 
-#filename: Name of the output video file (e.g., “output.mp4”).
-#fourcc: FourCC (Four Character Code) codec (e.g., “XVID”, “MJPG”, “MP4V”, “X264”).
-#fps: Frames per second (e.g., 30.0).
-#frame_size: Tuple specifying the frame width and height (e.g., (640, 480)).
-#isColor: Boolean (True for color, False for grayscale).
-def draw_map(env: Enviroment, agent_pos, agent_dir, cell_size=40):
+# ---------------------------
+# Função de desenho (mapa + agente)
+# ---------------------------
+def draw_map_frame(env: Environment, agent_pos, agent_dir, cell_size=40):
+    """
+    Desenha o mapa em uma imagem NumPy (BGR).
+    Retorna frame (np.uint8).
+    """
+
     rows, cols = env.rows, env.cols
     height = rows * cell_size
     width = cols * cell_size
-    
+
+    # Frame branco
     frame = np.ones((height, width, 3), dtype=np.uint8) * 255
-    
+
+    # Cores BGR
     COLOR_WALL = (0, 0, 0)
     COLOR_PATH = (255, 255, 255)
     COLOR_FOOD = (0, 140, 255)  # laranja
@@ -285,7 +313,8 @@ def draw_map(env: Enviroment, agent_pos, agent_dir, cell_size=40):
     COLOR_GRID = (200, 200, 200)
     COLOR_AGENT = (255, 0, 255)  # rosa
     COLOR_ARROW = (0, 0, 0)
-    
+
+    # Desenha células
     for i in range(rows):
         for j in range(cols):
             ch = env.grid[i][j]
@@ -332,16 +361,25 @@ def draw_map(env: Enviroment, agent_pos, agent_dir, cell_size=40):
 
     return frame
 
-def main(mapfile=None, output_video="simulation.mp4", show_window=False):
-    if mapfile and os.path.exists(mapfile):
-        env = Enviroment(maze_file= mapfile)
-    
-    agent = Agent(env)    
-  
-def render_cb(pos, direction):
-    return draw_map(env, pos, direction, cell_size=48)
 
-    agent.r
+# ---------------------------
+# Main: rodar simulação e salvar vídeo
+# ---------------------------
+def main(mapfile=None, output_video="simulation.mp4", show_window=False):
+    # carregar mapa
+    if mapfile and os.path.exists(mapfile):
+        env = Environment(filename=mapfile)
+    else:
+        env = Environment(grid_lines=SAMPLE_MAP)
+
+    agent = Agent(env)
+
+    # função que desenha e retorna frame
+    def render_cb(pos, direction):
+        return draw_map_frame(env, pos, direction, cell_size=48)
+
+    # roda simulação (o agente chamará render_callback para cada movimento)
+    agent.run(render_callback=render_cb)
 
     # Se não gerou frames (caso estranho), desenhar pelo menos o inicial
     if not agent.frames:
@@ -373,7 +411,9 @@ def render_cb(pos, direction):
     print(f"Vídeo salvo em: {output_video}")
 
 
- 
+# ---------------------------
+# Executa quando chamado diretamente
+# ---------------------------
 if __name__ == "__main__":
-    mapfile = "maze.txt"
+    mapfile = sys.argv[1] if len(sys.argv) > 1 else 'maze.txt'
     main(mapfile=mapfile, output_video="simulation.mp4", show_window=False)
