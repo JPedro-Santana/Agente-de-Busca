@@ -12,13 +12,13 @@ class Environment:
     """
     DIR_DELTAS = {'N': (-1, 0), 'S': (1, 0), 'L': (0, 1), 'O': (0, -1)}
 
-    def __init__(self, filename='maze.txt', grid_lines=None):
-        if filename:
+    def __init__(self, file_name='maze.txt', grid_lines=None):
+        if file_name:
             self.grid = [list(line.rstrip("\n")) for line in open('maze.txt')]
         elif grid_lines:
             self.grid = [list(line) for line in grid_lines]
         else:
-            raise ValueError("Passe filename ou grid_lines")
+            raise ValueError("Passe um nome de arquivo ou grid lines")
 
         # normalizar largura das linhas (preencher com 'X' se necessário)
         maxc = max(len(row) for row in self.grid)
